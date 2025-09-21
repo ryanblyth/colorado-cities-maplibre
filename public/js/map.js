@@ -664,11 +664,18 @@ function fixPopupAccessibility() {
   }, 10);
 }
 
-  // Add city layers before the map fully loads to place them below base layers
-  map.on('style.load', async () => {
-    const response = await fetch('../data/colorado-cities-enriched-detailed-app.geojson');
-    const geojson = await response.json();
-    chartData = geojson;
+  // Add city layers when the map loads
+  map.on('load', async () => {
+    try {
+      console.log('Map loaded, fetching city data...');
+      const response = await fetch('../data/colorado-cities-enriched-detailed-app.geojson');
+      console.log('Response status:', response.status);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const geojson = await response.json();
+      console.log('City data loaded:', geojson.features.length, 'cities');
+      chartData = geojson;
 
     // Add IDs to features if they don't exist and calculate population density
     geojson.features.forEach((feature, index) => {
@@ -775,110 +782,130 @@ function fixPopupAccessibility() {
       });
     }
 
-  map.addSource('colorado-cities', {
-    type: 'geojson',
-    data: geojson
-  });
+  try {
+    map.addSource('colorado-cities', {
+      type: 'geojson',
+      data: geojson
+    });
+    console.log('Added colorado-cities source');
+  } catch (error) {
+    console.error('Error adding source:', error);
+  }
 
   // Total Population Layer
-  map.addLayer({
-    id: 'city-fills-population',
-    type: 'fill',
-    source: 'colorado-cities',
-    paint: {
-      'fill-color': [
-        'case',
-        ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-        COLORS.CDP, // Gray for CDPs
-        [
-          'interpolate',
-          ['linear'],
-          ['get', 'Total_Pop'],
-          0, COLORS.VERY_LIGHT,      // Very light blue for small cities
-          5000, COLORS.LIGHT,        // Light blue
-          25000, COLORS.MEDIUM,      // Medium blue
-          100000, COLORS.LIGHT_PURPLE, // Light purple
-          300000, COLORS.MEDIUM_PURPLE, // Medium purple
-          600000, COLORS.DARK_PURPLE  // Dark purple
+  try {
+    map.addLayer({
+      id: 'city-fills-population',
+      type: 'fill',
+      source: 'colorado-cities',
+      paint: {
+        'fill-color': [
+          'case',
+          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
+          COLORS.CDP, // Gray for CDPs
+          [
+            'interpolate',
+            ['linear'],
+            ['get', 'Total_Pop'],
+            0, COLORS.VERY_LIGHT,      // Very light blue for small cities
+            5000, COLORS.LIGHT,        // Light blue
+            25000, COLORS.MEDIUM,      // Medium blue
+            100000, COLORS.LIGHT_PURPLE, // Light purple
+            300000, COLORS.MEDIUM_PURPLE, // Medium purple
+            600000, COLORS.DARK_PURPLE  // Dark purple
+          ]
+        ],
+        'fill-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false], 1,
+          ['case',
+            ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
+          ]
         ]
-      ],
-      'fill-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false], 1,
-        ['case',
-          ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
-        ]
-      ]
-    }
-  }, 'water');
+      }
+    });
+    console.log('Added city-fills-population layer');
+  } catch (error) {
+    console.error('Error adding population layer:', error);
+  }
 
   // Population Density Layer (initially hidden)
-  map.addLayer({
-    id: 'city-fills-density',
-    type: 'fill',
-    source: 'colorado-cities',
-    paint: {
-      'fill-color': [
-        'case',
-        ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-        COLORS.CDP, // Gray for CDPs
-        [
-          'interpolate',
-          ['linear'],
-          ['get', 'Pop_Density'],
-          0, COLORS.VERY_LIGHT,      // Very light blue for low density
-          100, COLORS.LIGHT,         // Light blue
-          500, COLORS.MEDIUM,        // Medium blue
-          1000, COLORS.LIGHT_PURPLE, // Light purple
-          2000, COLORS.MEDIUM_PURPLE, // Medium purple
-          5000, COLORS.DARK_PURPLE   // Dark purple
+  try {
+    map.addLayer({
+      id: 'city-fills-density',
+      type: 'fill',
+      source: 'colorado-cities',
+      paint: {
+        'fill-color': [
+          'case',
+          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
+          COLORS.CDP, // Gray for CDPs
+          [
+            'interpolate',
+            ['linear'],
+            ['get', 'Pop_Density'],
+            0, COLORS.VERY_LIGHT,      // Very light blue for low density
+            100, COLORS.LIGHT,         // Light blue
+            500, COLORS.MEDIUM,        // Medium blue
+            1000, COLORS.LIGHT_PURPLE, // Light purple
+            2000, COLORS.MEDIUM_PURPLE, // Medium purple
+            5000, COLORS.DARK_PURPLE   // Dark purple
+          ]
+        ],
+        'fill-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false], 1,
+          ['case',
+            ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
+          ]
         ]
-      ],
-      'fill-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false], 1,
-        ['case',
-          ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
-        ]
-      ]
-    }
-  }, 'water');
+      }
+    });
+    console.log('Added city-fills-density layer (hidden)');
+  } catch (error) {
+    console.error('Error adding density layer:', error);
+  }
 
   // Hide density layer initially
   map.setLayoutProperty('city-fills-density', 'visibility', 'none');
 
   // Border layer (shared between both views)
-  map.addLayer({
-    id: 'city-borders',
-    type: 'line',
-    source: 'colorado-cities',
-    paint: {
-      'line-color': [
-        'case',
-        ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-        COLORS.CDP, // Gray for CDPs
-        [
-          'interpolate',
-          ['linear'],
-          ['get', 'Total_Pop'],
-          0, COLORS.VERY_LIGHT,      // Very light blue for small cities
-          5000, COLORS.LIGHT,        // Light blue
-          25000, COLORS.MEDIUM,      // Medium light blue
-          100000, COLORS.LIGHT_PURPLE, // Light purple
-          300000, COLORS.MEDIUM_PURPLE, // Medium purple
-          600000, COLORS.DARK_PURPLE  // Dark purple
+  try {
+    map.addLayer({
+      id: 'city-borders',
+      type: 'line',
+      source: 'colorado-cities',
+      paint: {
+        'line-color': [
+          'case',
+          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
+          COLORS.CDP, // Gray for CDPs
+          [
+            'interpolate',
+            ['linear'],
+            ['get', 'Total_Pop'],
+            0, COLORS.VERY_LIGHT,      // Very light blue for small cities
+            5000, COLORS.LIGHT,        // Light blue
+            25000, COLORS.MEDIUM,      // Medium light blue
+            100000, COLORS.LIGHT_PURPLE, // Light purple
+            300000, COLORS.MEDIUM_PURPLE, // Medium purple
+            600000, COLORS.DARK_PURPLE  // Dark purple
+          ]
+        ],
+        'line-width': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false], 1, 0.5
+        ],
+        'line-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false], 1, 0.6
         ]
-      ],
-      'line-width': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false], 1, 0.5
-      ],
-      'line-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false], 1, 0.6
-      ]
-    }
-  }, 'water');
+      }
+    });
+    console.log('Added city-borders layer');
+  } catch (error) {
+    console.error('Error adding border layer:', error);
+  }
 
   // Add click event for popup
   map.on('click', 'city-fills-population', (e) => {
@@ -1248,6 +1275,9 @@ function fixPopupAccessibility() {
   // Example (commented): add a vector layer from a pmtiles-backed source
   // map.addSource('demo', { type: 'vector', url: 'pmtiles:///tiles/demo.pmtiles' });
   // map.addLayer({ id: 'demo-fill', type: 'fill', source: 'demo', 'source-layer': 'demo_layer', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.3 }});
+  } catch (error) {
+    console.error('Error loading city data:', error);
+  }
 });
 
 // Function to format popup content

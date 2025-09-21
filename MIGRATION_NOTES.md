@@ -77,6 +77,12 @@
 - [x] Asset directory structure created
 - [x] Documentation updated
 
+### Fixed Issues ✅
+- [x] Data loading path corrected (../data/...)
+- [x] Layer insertion fixed (removed 'water' layer reference)
+- [x] Error handling added for debugging
+- [x] Event timing corrected (map.on('load') instead of 'style.load')
+
 ### Pending ⏳
 - [ ] Add actual font files (PBF format)
 - [ ] Add actual sprite files (JSON + PNG)
