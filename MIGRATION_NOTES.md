@@ -82,6 +82,7 @@
 - [x] Layer insertion fixed (removed 'water' layer reference)
 - [x] Error handling added for debugging
 - [x] Event timing corrected (map.on('load') instead of 'style.load')
+- [x] Sprite loading error fixed (removed sprite/glyph references from style)
 
 ### Pending ⏳
 - [ ] Add actual font files (PBF format)
