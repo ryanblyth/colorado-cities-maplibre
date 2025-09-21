@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Colorado Cities Map</title>
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<link href="css/style.css?v=1.0" rel="stylesheet">
+</head>
+<body>
+
+  <div id="map"></div>
+  <div id="chart-pane">
+    <div class="chart-header">
+      <div class="chart-controls">
+        <button id="chart-population-btn" class="chart-btn active">Population</button>
+        <button id="chart-density-btn" class="chart-btn">Density</button>
+        <button id="chart-demographics-btn" class="chart-btn">City Details</button>
+      </div>
+    </div>
+    <div id="chart-container"></div>
+  </div>
+
+  <script src="js/map.js?v=2.9"></script>
+
+</body>
+</html>
