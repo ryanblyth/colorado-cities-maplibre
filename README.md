@@ -1,7 +1,62 @@
 # colorado-cities-map
 Boundaries and data for Colorado cities
 
-## Steps to Reproduce Project
+## Migration to MapLibre GL JS
+
+This project has been migrated from Mapbox GL JS to MapLibre GL JS for vendor independence and cost reduction.
+
+### What Changed
+- **Map Library**: Switched from Mapbox GL JS to MapLibre GL JS
+- **Style**: Converted to vendor-neutral style using OpenStreetMap tiles
+- **Assets**: Set up local font and sprite asset structure
+- **Dependencies**: Removed Mapbox access token requirement
+
+### Running the Application
+
+1. **Start the development server:**
+   ```bash
+   python serve.py
+   ```
+
+2. **Open in browser:**
+   ```
+   http://localhost:8000
+   ```
+
+### Asset Setup (Required)
+
+To complete the migration, you need to add font and sprite assets:
+
+#### Fonts
+Add PBF font files to `public/assets/fonts/` following the structure:
+```
+public/assets/fonts/
+├── {fontstack}/
+│   └── {range}.pbf
+```
+
+See `public/assets/fonts/README.md` for detailed instructions.
+
+#### Sprites
+Add sprite files to `public/assets/sprites/`:
+```
+public/assets/sprites/
+├── basemap.json
+└── basemap.png
+```
+
+See `public/assets/sprites/README.md` for detailed instructions.
+
+### Style Conversion
+
+The style conversion script can be run to update the map style:
+```bash
+node scripts/convert-style.mjs
+```
+
+This generates `public/styles/maplibre-style.json` with vendor-neutral tile sources.
+
+## Original Project Setup
 
 ### Create Python virtual environment, add libraries, add to .gitgnore.
 
