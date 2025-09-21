@@ -1,4 +1,10 @@
-mapboxgl.accessToken = 'pk.eyJ1IjoiaW5kZWxpYmUiLCJhIjoiY2xvM2k1Z25jMGZmbjJsbW9iMGV0M293cyJ9.UPel041iNYR3w_gq01-X8g';
+// MapLibre GL JS - no access token required
+
+// Enable PMTiles protocol support
+if (typeof PMTiles !== 'undefined' && typeof protocol !== 'undefined') {
+  maplibregl.addProtocol('pmtiles', protocol.tile);
+  console.log('PMTiles protocol enabled');
+}
 
 // Color variables for consistent use across the application
 const COLORS = {
@@ -30,15 +36,15 @@ const DENSITY_THRESHOLDS = {
   EXTREME: 5000
 };
 
-const map = new mapboxgl.Map({
+const map = new maplibregl.Map({
   container: 'map',
-  style: 'mapbox://styles/mapbox/dark-v11',
+  style: 'styles/maplibre-style.json',
   center: [-105.5, 39.1],
   zoom: 6
 });
 
 // Create a popup but don't add it to the map yet
-const popup = new mapboxgl.Popup({
+const popup = new maplibregl.Popup({
   closeButton: true,
   closeOnClick: false,
   maxWidth: '300px',
@@ -651,7 +657,7 @@ function updateChart(type) {
 // Function to fix popup accessibility issues
 function fixPopupAccessibility() {
   setTimeout(() => {
-    const closeButton = document.querySelector('.mapboxgl-popup-close-button');
+    const closeButton = document.querySelector('.maplibregl-popup-close-button');
     if (closeButton) {
       closeButton.removeAttribute('aria-hidden');
     }
@@ -1238,6 +1244,10 @@ function fixPopupAccessibility() {
   });
 
   console.log("Map loaded with Colorado cities");
+  
+  // Example (commented): add a vector layer from a pmtiles-backed source
+  // map.addSource('demo', { type: 'vector', url: 'pmtiles:///tiles/demo.pmtiles' });
+  // map.addLayer({ id: 'demo-fill', type: 'fill', source: 'demo', 'source-layer': 'demo_layer', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.3 }});
 });
 
 // Function to format popup content
