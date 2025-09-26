@@ -83,6 +83,8 @@
 - [x] Error handling added for debugging
 - [x] Event timing corrected (map.on('load') instead of 'style.load')
 - [x] Sprite loading error fixed (removed sprite/glyph references from style)
+- [x] Upgraded to vector tiles using local custom style file (public/styles/maplibre-style.json)
+- [x] Fixed source layer mismatch errors (updated to use available layers: countries, geolines, centroids)
 
 ### Pending ⏳
 - [ ] Add actual font files (PBF format)

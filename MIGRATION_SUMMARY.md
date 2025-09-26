@@ -15,7 +15,7 @@ The Colorado Cities Map has been successfully migrated from Mapbox GL JS to MapL
 - **JavaScript**: All `mapboxgl.*` references replaced with `maplibregl.*`
 - **CSS**: All `.mapboxgl-*` classes updated to `.maplibregl-*`
 - **HTML**: CDN links updated to MapLibre and PMTiles
-- **Style**: Converted to use OpenStreetMap tiles with dark theme
+- **Style**: Upgraded to OpenMapTiles vector tiles with custom dark theme
 
 ### 3. New Features Added
 - **PMTiles Support**: Protocol enabled for efficient vector tile serving

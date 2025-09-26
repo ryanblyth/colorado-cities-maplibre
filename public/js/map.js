@@ -1,9 +1,31 @@
 // MapLibre GL JS - no access token required
 
 // Enable PMTiles protocol support
-if (typeof PMTiles !== 'undefined' && typeof protocol !== 'undefined') {
-  maplibregl.addProtocol('pmtiles', protocol.tile);
-  console.log('PMTiles protocol enabled');
+function enablePMTiles() {
+  if (typeof pmtiles !== 'undefined' && typeof pmtiles.Protocol !== 'undefined') {
+    // Use PMTiles 3.x API
+    const protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol('pmtiles', protocol.tile);
+    console.log('PMTiles protocol enabled');
+    return true;
+  }
+  return false;
+}
+
+// Wait for PMTiles to load before initializing map
+function waitForPMTiles() {
+  return new Promise((resolve) => {
+    const checkPMTiles = () => {
+      if (enablePMTiles()) {
+        console.log('PMTiles protocol enabled');
+        resolve();
+      } else {
+        console.log('Waiting for PMTiles library...');
+        setTimeout(checkPMTiles, 100);
+      }
+    };
+    checkPMTiles();
+  });
 }
 
 // Color variables for consistent use across the application
@@ -36,20 +58,335 @@ const DENSITY_THRESHOLDS = {
   EXTREME: 5000
 };
 
-const map = new maplibregl.Map({
-  container: 'map',
-  style: 'styles/maplibre-style.json',
-  center: [-105.5, 39.1],
-  zoom: 6
-});
+// Initialize map after PMTiles is ready
+let map;
+let popup;
 
-// Create a popup but don't add it to the map yet
-const popup = new maplibregl.Popup({
-  closeButton: true,
-  closeOnClick: false,
-  maxWidth: '300px',
-  className: 'custom-popup',
-  focusAfterOpen: false
+function initializeMap() {
+  // Create a popup but don't add it to the map yet
+  popup = new maplibregl.Popup({
+    closeButton: true,
+    closeOnClick: false,
+    maxWidth: '300px',
+    className: 'custom-popup',
+    focusAfterOpen: false
+  });
+  
+  // Continue with the rest of the map initialization...
+  setupMapEventHandlers();
+}
+
+function setupMapEventHandlers() {
+  // Add city layers when the map loads
+  map.on('load', async () => {
+    try {
+      console.log('Map loaded, fetching city data...');
+      const response = await fetch('../data/colorado-cities-enriched-detailed-app.geojson');
+      console.log('Response status:', response.status);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const geojson = await response.json();
+      console.log('City data loaded:', geojson.features.length, 'cities');
+      chartData = geojson;
+
+    // Add IDs to features if they don't exist and calculate population density
+    geojson.features.forEach((feature, index) => {
+      if (!feature.id) {
+        feature.id = feature.properties.GEOID || index;
+      }
+      
+      // Calculate population density (people per square mile)
+      // ALAND is in square meters, convert to square miles (1 sq mile = 2,589,988 sq meters)
+      const areaSqMiles = feature.properties.ALAND / 2589988;
+      feature.properties.Pop_Density = areaSqMiles > 0 ? 
+        Math.round(feature.properties.Total_Pop / areaSqMiles) : 0;
+    });
+
+    // Variables for key highlighting
+    let clickedKeyItem = null;
+    let highlightedFeatures = [];
+
+    // Function to highlight cities by range
+    function highlightCitiesByRange(range, type, highlight) {
+      if (!range) return; // Safety check for undefined/null range
+      
+      const data = chartData || geojson;
+      if (!data) return;
+      
+      const features = data.features;
+      const highlightedFeatures = [];
+      
+      features.forEach(feature => {
+        if (!feature.properties) return; // skip if properties is missing
+        let shouldHighlight = false;
+        const properties = feature.properties;
+        
+        if (range === 'cdp') {
+          shouldHighlight = properties.NAMELSAD && properties.NAMELSAD.includes('CDP');
+        } else {
+          const value = type === 'population' ? properties.Total_Pop : properties.Pop_Density;
+          if (value === null || value === undefined) return;
+          
+          switch (range) {
+            case 'very-light':
+              shouldHighlight = value < (type === 'population' ? POPULATION_THRESHOLDS.SMALL : DENSITY_THRESHOLDS.LOW);
+              break;
+            case 'light':
+              shouldHighlight = value >= (type === 'population' ? POPULATION_THRESHOLDS.SMALL : DENSITY_THRESHOLDS.LOW) && 
+                               value < (type === 'population' ? POPULATION_THRESHOLDS.MEDIUM : DENSITY_THRESHOLDS.MEDIUM);
+              break;
+            case 'medium':
+              shouldHighlight = value >= (type === 'population' ? POPULATION_THRESHOLDS.MEDIUM : DENSITY_THRESHOLDS.MEDIUM) && 
+                               value < (type === 'population' ? POPULATION_THRESHOLDS.LARGE : DENSITY_THRESHOLDS.HIGH);
+              break;
+            case 'light-purple':
+              shouldHighlight = value >= (type === 'population' ? POPULATION_THRESHOLDS.LARGE : DENSITY_THRESHOLDS.HIGH) && 
+                               value < (type === 'population' ? POPULATION_THRESHOLDS.VERY_LARGE : DENSITY_THRESHOLDS.VERY_HIGH);
+              break;
+            case 'medium-purple':
+              shouldHighlight = value >= (type === 'population' ? POPULATION_THRESHOLDS.VERY_LARGE : DENSITY_THRESHOLDS.VERY_HIGH) && 
+                               value < (type === 'population' ? POPULATION_THRESHOLDS.MEGA : DENSITY_THRESHOLDS.EXTREME);
+              break;
+            case 'dark-purple':
+              shouldHighlight = value >= (type === 'population' ? POPULATION_THRESHOLDS.MEGA : DENSITY_THRESHOLDS.EXTREME);
+              break;
+          }
+        }
+        
+        if (shouldHighlight) {
+          highlightedFeatures.push(feature.id);
+        }
+      });
+      
+      if (highlight) {
+        // Add highlighted features to the map
+        map.setFilter('city-fills-population', ['in', 'id', ...highlightedFeatures]);
+        map.setFilter('city-fills-density', ['in', 'id', ...highlightedFeatures]);
+      } else {
+        // Remove highlight by resetting to all features
+        map.setFilter('city-fills-population', ['has', 'id']);
+        map.setFilter('city-fills-density', ['has', 'id']);
+      }
+    }
+
+    // Add the data source
+    map.addSource('colorado-cities', {
+      type: 'geojson',
+      data: geojson
+    });
+
+    // Add population-based city fills
+    map.addLayer({
+      id: 'city-fills-population',
+      type: 'fill',
+      source: 'colorado-cities',
+      paint: {
+        'fill-color': [
+          'case',
+          ['in', 'CDP', ['get', 'NAMELSAD']],
+          COLORS.CDP,
+          [
+            'case',
+            ['<', ['get', 'Total_Pop'], POPULATION_THRESHOLDS.SMALL],
+            COLORS.VERY_LIGHT,
+            [
+              'case',
+              ['<', ['get', 'Total_Pop'], POPULATION_THRESHOLDS.MEDIUM],
+              COLORS.LIGHT,
+              [
+                'case',
+                ['<', ['get', 'Total_Pop'], POPULATION_THRESHOLDS.LARGE],
+                COLORS.MEDIUM,
+                [
+                  'case',
+                  ['<', ['get', 'Total_Pop'], POPULATION_THRESHOLDS.VERY_LARGE],
+                  COLORS.LIGHT_PURPLE,
+                  [
+                    'case',
+                    ['<', ['get', 'Total_Pop'], POPULATION_THRESHOLDS.MEGA],
+                    COLORS.MEDIUM_PURPLE,
+                    COLORS.DARK_PURPLE
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ],
+        'fill-opacity': 0.7
+      }
+    });
+
+    // Add density-based city fills
+    map.addLayer({
+      id: 'city-fills-density',
+      type: 'fill',
+      source: 'colorado-cities',
+      paint: {
+        'fill-color': [
+          'case',
+          ['in', 'CDP', ['get', 'NAMELSAD']],
+          COLORS.CDP,
+          [
+            'case',
+            ['<', ['get', 'Pop_Density'], DENSITY_THRESHOLDS.LOW],
+            COLORS.VERY_LIGHT,
+            [
+              'case',
+              ['<', ['get', 'Pop_Density'], DENSITY_THRESHOLDS.MEDIUM],
+              COLORS.LIGHT,
+              [
+                'case',
+                ['<', ['get', 'Pop_Density'], DENSITY_THRESHOLDS.HIGH],
+                COLORS.MEDIUM,
+                [
+                  'case',
+                  ['<', ['get', 'Pop_Density'], DENSITY_THRESHOLDS.VERY_HIGH],
+                  COLORS.LIGHT_PURPLE,
+                  [
+                    'case',
+                    ['<', ['get', 'Pop_Density'], DENSITY_THRESHOLDS.EXTREME],
+                    COLORS.MEDIUM_PURPLE,
+                    COLORS.DARK_PURPLE
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ],
+        'fill-opacity': 0.7
+      }
+    });
+
+    // Add city borders
+    map.addLayer({
+      id: 'city-borders',
+      type: 'line',
+      source: 'colorado-cities',
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': 1,
+        'line-opacity': 0.8
+      }
+    });
+
+    // Initially show population view
+    map.setLayoutProperty('city-fills-population', 'visibility', 'visible');
+    map.setLayoutProperty('city-fills-density', 'visibility', 'none');
+
+    // Add click handlers for both layers
+    map.on('click', 'city-fills-population', (e) => {
+      const properties = e.features[0].properties;
+      selectedCity = properties;
+      
+      // Update popup content
+      popup.setLngLat(e.lngLat)
+        .setHTML(formatPopupContent(properties))
+        .addTo(map);
+      
+      // Update chart
+      updateChart('population');
+    });
+
+    map.on('click', 'city-fills-density', (e) => {
+      const properties = e.features[0].properties;
+      selectedCity = properties;
+      
+      // Update popup content
+      popup.setLngLat(e.lngLat)
+        .setHTML(formatPopupContent(properties))
+        .addTo(map);
+      
+      // Update chart
+      updateChart('density');
+    });
+
+    // Add hover effects
+    let hoveredCityId = null;
+
+    map.on('mouseenter', 'city-fills-population', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+
+    map.on('mouseenter', 'city-fills-density', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+
+    map.on('mousemove', 'city-fills-population', (e) => {
+      if (e.features.length > 0) {
+        if (hoveredCityId !== null) {
+          map.setFeatureState(
+            { source: 'colorado-cities', id: hoveredCityId },
+            { hover: false }
+          );
+        }
+        hoveredCityId = e.features[0].id;
+        map.setFeatureState(
+          { source: 'colorado-cities', id: hoveredCityId },
+          { hover: true }
+        );
+      }
+    });
+
+    map.on('mousemove', 'city-fills-density', (e) => {
+      if (e.features.length > 0) {
+        if (hoveredCityId !== null) {
+          map.setFeatureState(
+            { source: 'colorado-cities', id: hoveredCityId },
+            { hover: false }
+          );
+        }
+        hoveredCityId = e.features[0].id;
+        map.setFeatureState(
+          { source: 'colorado-cities', id: hoveredCityId },
+          { hover: true }
+        );
+      }
+    });
+
+    map.on('mouseleave', 'city-fills-population', () => {
+      map.getCanvas().style.cursor = '';
+      if (hoveredCityId !== null) {
+        map.setFeatureState(
+          { source: 'colorado-cities', id: hoveredCityId },
+          { hover: false }
+        );
+        hoveredCityId = null;
+      }
+    });
+
+    map.on('mouseleave', 'city-fills-density', () => {
+      map.getCanvas().style.cursor = '';
+      if (hoveredCityId !== null) {
+        map.setFeatureState(
+          { source: 'colorado-cities', id: hoveredCityId },
+          { hover: false }
+        );
+        hoveredCityId = null;
+      }
+    });
+
+    console.log("Map loaded with Colorado cities");
+    
+    // Example (commented): add a vector layer from a pmtiles-backed source
+    // map.addSource('demo', { type: 'vector', url: 'pmtiles:///tiles/demo.pmtiles' });
+    // map.addLayer({ id: 'demo-fill', type: 'fill', source: 'demo', 'source-layer': 'demo_layer', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.3 }});
+    } catch (error) {
+      console.error('Error loading city data:', error);
+    }
+  });
+}
+
+waitForPMTiles().then(() => {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: 'styles/maplibre-openmaptiles-pmtiles.json',
+    center: [-105.5, 39.1],
+    zoom: 6
+  });
+  
+  // Initialize map after it's created
+  initializeMap();
 });
 
 // Chart functionality - moved outside setTimeout for proper scope
@@ -663,622 +1000,6 @@ function fixPopupAccessibility() {
     }
   }, 10);
 }
-
-  // Add city layers when the map loads
-  map.on('load', async () => {
-    try {
-      console.log('Map loaded, fetching city data...');
-      const response = await fetch('../data/colorado-cities-enriched-detailed-app.geojson');
-      console.log('Response status:', response.status);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const geojson = await response.json();
-      console.log('City data loaded:', geojson.features.length, 'cities');
-      chartData = geojson;
-
-    // Add IDs to features if they don't exist and calculate population density
-    geojson.features.forEach((feature, index) => {
-      if (!feature.id) {
-        feature.id = feature.properties.GEOID || index;
-      }
-      
-      // Calculate population density (people per square mile)
-      // ALAND is in square meters, convert to square miles (1 sq mile = 2,589,988 sq meters)
-      const areaSqMiles = feature.properties.ALAND / 2589988;
-      feature.properties.Pop_Density = areaSqMiles > 0 ? 
-        Math.round(feature.properties.Total_Pop / areaSqMiles) : 0;
-    });
-
-    // Variables for key highlighting
-    let clickedKeyItem = null;
-    let highlightedFeatures = [];
-
-    // Function to highlight cities by range
-    function highlightCitiesByRange(range, type, highlight) {
-      if (!range) return; // Safety check for undefined/null range
-      
-      const data = chartData || geojson;
-      if (!data) return;
-      
-      const features = data.features;
-      const highlightedFeatures = [];
-      
-      features.forEach(feature => {
-        if (!feature.properties) return; // skip if properties is missing
-        let shouldHighlight = false;
-        const properties = feature.properties;
-        
-        if (range === 'cdp') {
-          shouldHighlight = properties.NAMELSAD && properties.NAMELSAD.includes('CDP');
-        } else {
-          const value = type === 'population' ? properties.Total_Pop : properties.Pop_Density;
-          
-          if (range.includes('+')) {
-            // Handle ranges like "600000+" or "5000+"
-            const minValue = parseInt(range.replace('+', ''));
-            shouldHighlight = value >= minValue;
-          } else {
-            // Handle ranges like "0-5000" or "100-500"
-            const [min, max] = range.split('-').map(v => parseInt(v));
-            shouldHighlight = value >= min && value < max;
-          }
-        }
-        
-        if (shouldHighlight) {
-          map.setFeatureState(
-            { source: 'colorado-cities', id: feature.id },
-            { keyHighlight: highlight }
-          );
-          if (highlight) {
-            highlightedFeatures.push(feature.id);
-          }
-        }
-      });
-    }
-
-    // Function to clear all highlights
-    function clearAllHighlights() {
-      const data = chartData || geojson;
-      if (!data) return;
-      
-      data.features.forEach(feature => {
-        map.setFeatureState(
-          { source: 'colorado-cities', id: feature.id },
-          { keyHighlight: false }
-        );
-      });
-    }
-
-    // Function to add event listeners to key items
-    function addKeyItemEventListeners(layerControl) {
-      const keyItems = layerControl.querySelectorAll('.key-item');
-      keyItems.forEach(item => {
-        item.addEventListener('mouseenter', (event) => {
-          const range = event.currentTarget.dataset.range;
-          highlightCitiesByRange(range, currentKeyType, true);
-        });
-        item.addEventListener('mouseleave', (event) => {
-          // Only remove highlight if this item is not clicked
-          if (clickedKeyItem !== event.currentTarget) {
-            const range = event.currentTarget.dataset.range;
-            highlightCitiesByRange(range, currentKeyType, false);
-          }
-        });
-        item.addEventListener('click', (event) => {
-          const clickedItem = event.currentTarget;
-          if (clickedKeyItem === clickedItem) {
-            clickedKeyItem = null;
-            clearAllHighlights();
-            clickedItem.classList.remove('clicked');
-          } else {
-            if (clickedKeyItem) clickedKeyItem.classList.remove('clicked');
-            clickedKeyItem = clickedItem;
-            clickedItem.classList.add('clicked');
-            const range = clickedItem.dataset.range;
-            highlightCitiesByRange(range, currentKeyType, true);
-          }
-        });
-      });
-    }
-
-  try {
-    map.addSource('colorado-cities', {
-      type: 'geojson',
-      data: geojson
-    });
-    console.log('Added colorado-cities source');
-  } catch (error) {
-    console.error('Error adding source:', error);
-  }
-
-  // Total Population Layer
-  try {
-    map.addLayer({
-      id: 'city-fills-population',
-      type: 'fill',
-      source: 'colorado-cities',
-      paint: {
-        'fill-color': [
-          'case',
-          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-          COLORS.CDP, // Gray for CDPs
-          [
-            'interpolate',
-            ['linear'],
-            ['get', 'Total_Pop'],
-            0, COLORS.VERY_LIGHT,      // Very light blue for small cities
-            5000, COLORS.LIGHT,        // Light blue
-            25000, COLORS.MEDIUM,      // Medium blue
-            100000, COLORS.LIGHT_PURPLE, // Light purple
-            300000, COLORS.MEDIUM_PURPLE, // Medium purple
-            600000, COLORS.DARK_PURPLE  // Dark purple
-          ]
-        ],
-        'fill-opacity': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false], 1,
-          ['case',
-            ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
-          ]
-        ]
-      }
-    });
-    console.log('Added city-fills-population layer');
-  } catch (error) {
-    console.error('Error adding population layer:', error);
-  }
-
-  // Population Density Layer (initially hidden)
-  try {
-    map.addLayer({
-      id: 'city-fills-density',
-      type: 'fill',
-      source: 'colorado-cities',
-      paint: {
-        'fill-color': [
-          'case',
-          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-          COLORS.CDP, // Gray for CDPs
-          [
-            'interpolate',
-            ['linear'],
-            ['get', 'Pop_Density'],
-            0, COLORS.VERY_LIGHT,      // Very light blue for low density
-            100, COLORS.LIGHT,         // Light blue
-            500, COLORS.MEDIUM,        // Medium blue
-            1000, COLORS.LIGHT_PURPLE, // Light purple
-            2000, COLORS.MEDIUM_PURPLE, // Medium purple
-            5000, COLORS.DARK_PURPLE   // Dark purple
-          ]
-        ],
-        'fill-opacity': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false], 1,
-          ['case',
-            ['boolean', ['feature-state', 'keyHighlight'], false], 0.8, 0.5
-          ]
-        ]
-      }
-    });
-    console.log('Added city-fills-density layer (hidden)');
-  } catch (error) {
-    console.error('Error adding density layer:', error);
-  }
-
-  // Hide density layer initially
-  map.setLayoutProperty('city-fills-density', 'visibility', 'none');
-
-  // Border layer (shared between both views)
-  try {
-    map.addLayer({
-      id: 'city-borders',
-      type: 'line',
-      source: 'colorado-cities',
-      paint: {
-        'line-color': [
-          'case',
-          ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-          COLORS.CDP, // Gray for CDPs
-          [
-            'interpolate',
-            ['linear'],
-            ['get', 'Total_Pop'],
-            0, COLORS.VERY_LIGHT,      // Very light blue for small cities
-            5000, COLORS.LIGHT,        // Light blue
-            25000, COLORS.MEDIUM,      // Medium light blue
-            100000, COLORS.LIGHT_PURPLE, // Light purple
-            300000, COLORS.MEDIUM_PURPLE, // Medium purple
-            600000, COLORS.DARK_PURPLE  // Dark purple
-          ]
-        ],
-        'line-width': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false], 1, 0.5
-        ],
-        'line-opacity': [
-          'case',
-          ['boolean', ['feature-state', 'hover'], false], 1, 0.6
-        ]
-      }
-    });
-    console.log('Added city-borders layer');
-  } catch (error) {
-    console.error('Error adding border layer:', error);
-  }
-
-  // Add click event for popup
-  map.on('click', 'city-fills-population', (e) => {
-    const coordinates = e.lngLat;
-    const properties = e.features[0].properties;
-    
-    // Store selected city for demographics chart
-    selectedCity = properties;
-    
-    // Format the popup content
-    const popupContent = formatPopupContent(properties);
-    
-    popup
-      .setLngLat(coordinates)
-      .setHTML(popupContent)
-      .addTo(map);
-    
-    // Fix accessibility issues
-    fixPopupAccessibility();
-    
-    // Update demographics chart if it's active
-    if (document.getElementById('chart-demographics-btn').classList.contains('active')) {
-      updateChart('demographics');
-    }
-  });
-
-  map.on('click', 'city-fills-density', (e) => {
-    const coordinates = e.lngLat;
-    const properties = e.features[0].properties;
-    
-    // Store selected city for demographics chart
-    selectedCity = properties;
-    
-    // Format the popup content
-    const popupContent = formatPopupContent(properties);
-    
-    popup
-      .setLngLat(coordinates)
-      .setHTML(popupContent)
-      .addTo(map);
-    
-    // Fix accessibility issues
-    fixPopupAccessibility();
-    
-    // Update demographics chart if it's active
-    if (document.getElementById('chart-demographics-btn').classList.contains('active')) {
-      updateChart('demographics');
-    }
-  });
-
-  // Add layer control after everything else is set up
-  setTimeout(() => {
-    const layerControl = document.createElement('div');
-    layerControl.className = 'layer-control';
-    layerControl.innerHTML = `
-      <div class="layer-control-header">Map Layer</div>
-      <div class="layer-control-buttons">
-        <button id="population-btn" class="layer-btn active">Total Population</button>
-        <button id="density-btn" class="layer-btn">Population Density</button>
-      </div>
-      <div class="color-key">
-        <div class="key-header">Population</div>
-        <div class="key-items">
-          <div class="key-item" data-range="0-5000">
-            <div class="key-color" style="background: #53D6FC;"></div>
-            <div class="key-label">0 - 5K</div>
-          </div>
-          <div class="key-item" data-range="5000-25000">
-            <div class="key-color" style="background: #02C7FC;"></div>
-            <div class="key-label">5K - 25K</div>
-          </div>
-          <div class="key-item" data-range="25000-100000">
-            <div class="key-color" style="background: #018CB5;"></div>
-            <div class="key-label">25K - 100K</div>
-          </div>
-          <div class="key-item" data-range="100000-300000">
-            <div class="key-color" style="background: #d79ff7;"></div>
-            <div class="key-label">100K - 300K</div>
-          </div>
-          <div class="key-item" data-range="300000-600000">
-            <div class="key-color" style="background: #a654db;"></div>
-            <div class="key-label">300K - 600K</div>
-          </div>
-          <div class="key-item" data-range="600000+">
-            <div class="key-color" style="background: #7123a8;"></div>
-            <div class="key-label">600K+</div>
-          </div>
-          <div class="key-item" data-range="cdp">
-            <div class="key-color" style="background: #808080;"></div>
-            <div class="key-label">CDP</div>
-          </div>
-        </div>
-      </div>
-    `;
-    
-    // Add to the map container
-    const mapContainer = map.getContainer();
-    mapContainer.appendChild(layerControl);
-    
-    // Add event listeners to initial key items
-    addKeyItemEventListeners(layerControl);
-
-    // Add chart toggle button
-    const chartToggle = document.createElement('button');
-    chartToggle.className = 'chart-toggle';
-    chartToggle.textContent = '📊 Show Charts';
-    mapContainer.appendChild(chartToggle);
-
-    // Chart toggle functionality
-    chartToggle.addEventListener('click', function() {
-      const chartPane = document.getElementById('chart-pane');
-      const isExpanded = chartPane.classList.contains('expanded');
-      
-      if (isExpanded) {
-        chartPane.classList.remove('expanded');
-        chartToggle.textContent = '📊 Show Charts';
-      } else {
-        chartPane.classList.add('expanded');
-        chartToggle.textContent = '📊 Hide Charts';
-        // Always ensure chartData is set and show population chart
-        if (!chartData) {
-          chartData = geojson;
-        }
-        updateChart('population');
-      }
-    });
-
-    // Chart control functionality
-    document.getElementById('chart-population-btn').addEventListener('click', function() {
-      document.getElementById('chart-population-btn').classList.add('active');
-      document.getElementById('chart-density-btn').classList.remove('active');
-      document.getElementById('chart-demographics-btn').classList.remove('active');
-      updateChart('population');
-    });
-
-    document.getElementById('chart-density-btn').addEventListener('click', function() {
-      document.getElementById('chart-density-btn').classList.add('active');
-      document.getElementById('chart-population-btn').classList.remove('active');
-      document.getElementById('chart-demographics-btn').classList.remove('active');
-      updateChart('density');
-    });
-
-    document.getElementById('chart-demographics-btn').addEventListener('click', function() {
-      document.getElementById('chart-demographics-btn').classList.add('active');
-      document.getElementById('chart-population-btn').classList.remove('active');
-      document.getElementById('chart-density-btn').classList.remove('active');
-      updateChart('demographics');
-    });
-
-    // Function to update color key
-    function updateColorKey(type, layerControl) {
-      currentKeyType = type;
-      const keyHeader = layerControl.querySelector('.key-header');
-      const keyItems = layerControl.querySelector('.key-items');
-      
-      if (type === 'population') {
-        keyHeader.textContent = 'Population';
-        keyItems.innerHTML = `
-          <div class="key-item" data-range="0-5000">
-            <div class="key-color" style="background: ${COLORS.VERY_LIGHT};"></div>
-            <div class="key-label">0 - 5K</div>
-          </div>
-          <div class="key-item" data-range="5000-25000">
-            <div class="key-color" style="background: ${COLORS.LIGHT};"></div>
-            <div class="key-label">5K - 25K</div>
-          </div>
-          <div class="key-item" data-range="25000-100000">
-            <div class="key-color" style="background: ${COLORS.MEDIUM};"></div>
-            <div class="key-label">25K - 100K</div>
-          </div>
-          <div class="key-item" data-range="100000-300000">
-            <div class="key-color" style="background: ${COLORS.LIGHT_PURPLE};"></div>
-            <div class="key-label">100K - 300K</div>
-          </div>
-          <div class="key-item" data-range="300000-600000">
-            <div class="key-color" style="background: ${COLORS.MEDIUM_PURPLE};"></div>
-            <div class="key-label">300K - 600K</div>
-          </div>
-          <div class="key-item" data-range="600000+">
-            <div class="key-color" style="background: ${COLORS.DARK_PURPLE};"></div>
-            <div class="key-label">600K+</div>
-          </div>
-          <div class="key-item" data-range="cdp">
-            <div class="key-color" style="background: ${COLORS.CDP};"></div>
-            <div class="key-label">CDP</div>
-          </div>
-        `;
-      } else {
-        keyHeader.textContent = 'Density (per sq mile)';
-        keyItems.innerHTML = `
-          <div class="key-item" data-range="0-100">
-            <div class="key-color" style="background: ${COLORS.VERY_LIGHT};"></div>
-            <div class="key-label">0 - 100</div>
-          </div>
-          <div class="key-item" data-range="100-500">
-            <div class="key-color" style="background: ${COLORS.LIGHT};"></div>
-            <div class="key-label">100 - 500</div>
-          </div>
-          <div class="key-item" data-range="500-1000">
-            <div class="key-color" style="background: ${COLORS.MEDIUM};"></div>
-            <div class="key-label">500 - 1K</div>
-          </div>
-          <div class="key-item" data-range="1000-2000">
-            <div class="key-color" style="background: ${COLORS.LIGHT_PURPLE};"></div>
-            <div class="key-label">1K - 2K</div>
-          </div>
-          <div class="key-item" data-range="2000-5000">
-            <div class="key-color" style="background: ${COLORS.MEDIUM_PURPLE};"></div>
-            <div class="key-label">2K - 5K</div>
-          </div>
-          <div class="key-item" data-range="5000+">
-            <div class="key-color" style="background: ${COLORS.DARK_PURPLE};"></div>
-            <div class="key-label">5K+</div>
-          </div>
-          <div class="key-item" data-range="cdp">
-            <div class="key-color" style="background: ${COLORS.CDP};"></div>
-            <div class="key-label">CDP</div>
-          </div>
-        `;
-      }
-      
-      // Add event listeners to key items
-      addKeyItemEventListeners(layerControl);
-    }
-
-    // Layer switching functionality
-    document.getElementById('population-btn').addEventListener('click', function() {
-      clearAllHighlights();
-      clickedKeyItem = null; // Clear clicked item when switching tabs
-      updateColorKey('population', layerControl);
-      map.setLayoutProperty('city-fills-population', 'visibility', 'visible');
-      map.setLayoutProperty('city-fills-density', 'visibility', 'none');
-      
-      // Update border colors to match population layer
-      map.setPaintProperty('city-borders', 'line-color', [
-        'case',
-        ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-        COLORS.CDP, // Gray for CDPs
-        [
-          'interpolate',
-          ['linear'],
-          ['get', 'Total_Pop'],
-          0, COLORS.VERY_LIGHT,      // Very light blue for small cities
-          5000, COLORS.LIGHT,        // Light blue
-          25000, COLORS.MEDIUM,      // Medium light blue
-          100000, COLORS.LIGHT_PURPLE, // Light purple
-          300000, COLORS.MEDIUM_PURPLE, // Medium purple
-          600000, COLORS.DARK_PURPLE  // Dark purple
-        ]
-      ]);
-      
-      document.getElementById('population-btn').classList.add('active');
-      document.getElementById('density-btn').classList.remove('active');
-    });
-
-    document.getElementById('density-btn').addEventListener('click', function() {
-      clearAllHighlights();
-      clickedKeyItem = null; // Clear clicked item when switching tabs
-      updateColorKey('density', layerControl);
-      map.setLayoutProperty('city-fills-population', 'visibility', 'none');
-      map.setLayoutProperty('city-fills-density', 'visibility', 'visible');
-      
-      // Update border colors to match density layer
-      map.setPaintProperty('city-borders', 'line-color', [
-        'case',
-        ['any', ['in', 'CDP', ['get', 'NAMELSAD']]],
-        COLORS.CDP, // Gray for CDPs
-        [
-          'interpolate',
-          ['linear'],
-          ['get', 'Pop_Density'],
-          0, COLORS.VERY_LIGHT,      // Very light blue for low density
-          100, COLORS.LIGHT,         // Light blue
-          500, COLORS.MEDIUM,        // Medium light blue
-          1000, COLORS.LIGHT_PURPLE, // Light purple
-          2000, COLORS.MEDIUM_PURPLE, // Medium purple
-          5000, COLORS.DARK_PURPLE   // Dark purple
-        ]
-      ]);
-      
-      document.getElementById('density-btn').classList.add('active');
-      document.getElementById('population-btn').classList.remove('active');
-    });
-  }, 100);
-
-  // Add hover effect
-  let hoveredCityId = null;
-
-  map.on('mouseenter', 'city-fills-population', () => {
-    map.getCanvas().style.cursor = 'pointer';
-  });
-
-  map.on('mouseenter', 'city-fills-density', () => {
-    map.getCanvas().style.cursor = 'pointer';
-  });
-
-  map.on('mousemove', 'city-fills-population', (e) => {
-    if (e.features.length > 0) {
-      const newHoveredCityId = e.features[0].id;
-      
-      if (hoveredCityId !== newHoveredCityId) {
-        // Reset the previously hovered city
-        if (hoveredCityId !== null) {
-          map.setFeatureState(
-            { source: 'colorado-cities', id: hoveredCityId },
-            { hover: false }
-          );
-        }
-        
-        // Set the new hovered city
-        hoveredCityId = newHoveredCityId;
-        map.setFeatureState(
-          { source: 'colorado-cities', id: hoveredCityId },
-          { hover: true }
-        );
-      }
-    }
-  });
-
-  map.on('mousemove', 'city-fills-density', (e) => {
-    if (e.features.length > 0) {
-      const newHoveredCityId = e.features[0].id;
-      
-      if (hoveredCityId !== newHoveredCityId) {
-        // Reset the previously hovered city
-        if (hoveredCityId !== null) {
-          map.setFeatureState(
-            { source: 'colorado-cities', id: hoveredCityId },
-            { hover: false }
-          );
-        }
-        
-        // Set the new hovered city
-        hoveredCityId = newHoveredCityId;
-        map.setFeatureState(
-          { source: 'colorado-cities', id: hoveredCityId },
-          { hover: true }
-        );
-      }
-    }
-  });
-
-  map.on('mouseleave', 'city-fills-population', () => {
-    map.getCanvas().style.cursor = '';
-    if (hoveredCityId !== null) {
-      map.setFeatureState(
-        { source: 'colorado-cities', id: hoveredCityId },
-        { hover: false }
-      );
-      hoveredCityId = null;
-    }
-  });
-
-  map.on('mouseleave', 'city-fills-density', () => {
-    map.getCanvas().style.cursor = '';
-    if (hoveredCityId !== null) {
-      map.setFeatureState(
-        { source: 'colorado-cities', id: hoveredCityId },
-        { hover: false }
-      );
-      hoveredCityId = null;
-    }
-  });
-
-  console.log("Map loaded with Colorado cities");
-  
-  // Example (commented): add a vector layer from a pmtiles-backed source
-  // map.addSource('demo', { type: 'vector', url: 'pmtiles:///tiles/demo.pmtiles' });
-  // map.addLayer({ id: 'demo-fill', type: 'fill', source: 'demo', 'source-layer': 'demo_layer', paint: { 'fill-color': '#3b82f6', 'fill-opacity': 0.3 }});
-  } catch (error) {
-    console.error('Error loading city data:', error);
-  }
-});
 
 // Function to format popup content
 function formatPopupContent(properties) {
