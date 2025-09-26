@@ -7,3 +7,16 @@ __pycache__/
 
 # System files
 .DS_Store
+
+# build workspace (Planetiler, downloads, temp data)
+data/
+
+# large map artifacts
+public/tiles/*.pmtiles
+*.mbtiles
+*.osm.pbf
+
+# common heavy extras
+*.zip
+*.sqlite
+*.jar
